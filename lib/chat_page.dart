@@ -16,9 +16,7 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   late MessageCollection _collection;
   final _scrollController = ScrollController();
-  final List<BaseMessage> _messages = [];
   final _controller = TextEditingController();
-  bool _isLoadingPrevious = false;
 
   @override
   void initState() {
@@ -33,8 +31,8 @@ class _ChatPageState extends State<ChatPage> {
     // params: 기본값 사용 (previousResultSize: 20, nextResultSize: 0)
     _collection = MessageCollection(
       channel: widget.channel,
-      params: MessageListParams()..previousResultSize = 20,
-      handler: _MessageCollectionHandler(onUpdate: () => setState(() {}), messages: _messages),
+      params: MessageListParams()..previousResultSize = 15,
+      handler: _MessageCollectionHandler(onUpdate: () => setState(() {})),
     );
 
     // 메시지 로드 시작 - onMessagesAdded 콜백으로 _messages에 추가됨
@@ -46,18 +44,17 @@ class _ChatPageState extends State<ChatPage> {
 
   void _onScroll() {
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      if (_collection.hasPrevious && !_isLoadingPrevious) {
+      if (_collection.hasPrevious && !_collection.isLoading) {
         _loadPreviousMessages();
       }
     }
   }
 
   Future<void> _loadPreviousMessages() async {
-    _isLoadingPrevious = true;
     try {
       await _collection.loadPrevious();
-    } finally {
-      _isLoadingPrevious = false;
+    } catch (e) {
+      debugPrint('[Message] loadPrevious 실패: $e');
     }
   }
 
@@ -187,9 +184,9 @@ class _ChatPageState extends State<ChatPage> {
                 child: ListView.builder(
                   controller: _scrollController,
                   reverse: true, // 최신 메시지가 아래로 오도록
-                  itemCount: _messages.length,
+                  itemCount: _collection.messageList.length,
                   itemBuilder: (_, index) {
-                    final msg = _messages[index];
+                    final msg = _collection.messageList[_collection.messageList.length - 1 - index];
                     final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
                     final isDeleted = msg.customType == 'deleted';
 
@@ -273,51 +270,21 @@ class _ChatPageState extends State<ChatPage> {
 // MessageCollectionHandler: 메시지 목록 실시간 이벤트 수신
 class _MessageCollectionHandler extends MessageCollectionHandler {
   final VoidCallback onUpdate;
-  final List<BaseMessage> messages;
 
-  _MessageCollectionHandler({required this.onUpdate, required this.messages});
+  _MessageCollectionHandler({required this.onUpdate});
 
   @override
   void onMessagesAdded(MessageContext context, GroupChannel channel, List<BaseMessage> added) {
-    // 새 메시지 추가
-    // - 내가 보낸 메시지 (pending 상태)
-    // - 상대방이 보낸 메시지 (실시간 수신)
-    // - 이전 메시지 로드 (initialize, loadPrevious)
-    // reverse: true라 insert(0)이 화면상 맨 아래(최신)
-    for (final msg in added) {
-      final exists = messages.any(
-        (m) =>
-            m.messageId == msg.messageId ||
-            (msg.requestId != null && msg.requestId!.isNotEmpty && m.requestId == msg.requestId),
-      );
-      if (!exists) messages.insert(0, msg);
-    }
     onUpdate();
   }
 
   @override
   void onMessagesUpdated(MessageContext context, GroupChannel channel, List<BaseMessage> updated) {
-    // 메시지 변경
-    // - pending → succeeded 교체 (requestId로 찾음)
-    // - 메시지 수정
-    // - 삭제 처리 (customType: 'deleted'로 업데이트)
-    for (final msg in updated) {
-      // messageId로 먼저 찾고 (수정, 삭제 처리)
-      var i = messages.indexWhere((m) => m.messageId == msg.messageId);
-      // 없으면 requestId로 찾기 (pending → succeeded 교체)
-      if (i == -1) {
-        i = messages.indexWhere((m) => m.requestId == msg.requestId);
-      }
-      if (i != -1) messages[i] = msg;
-    }
     onUpdate();
   }
 
   @override
   void onMessagesDeleted(MessageContext context, GroupChannel channel, List<BaseMessage> deleted) {
-    // 실제 삭제된 메시지 제거 (deleteMessage() 호출 시)
-    // 우리는 삭제 대신 update를 사용하므로 이 콜백은 거의 호출 안 됨
-    messages.removeWhere((m) => deleted.any((d) => d.messageId == m.messageId));
     onUpdate();
   }
 
@@ -335,7 +302,6 @@ class _MessageCollectionHandler extends MessageCollectionHandler {
   void onHugeGapDetected() {
     // 오프라인 후 재연결 시 메시지 차이가 너무 클 때 호출
     // 전체 메시지 초기화 후 다시 로드
-    messages.clear();
     onUpdate();
   }
 }
