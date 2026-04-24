@@ -12,7 +12,7 @@ class ChannelListPage extends StatefulWidget {
 }
 
 class _ChannelListPageState extends State<ChannelListPage> {
-  GroupChannelCollection? _collection;
+  late GroupChannelCollection _collection;
   final List<GroupChannel> _channels = [];
 
   @override
@@ -38,7 +38,7 @@ class _ChannelListPageState extends State<ChannelListPage> {
     );
 
     // 첫 페이지 로드 - onChannelsAdded 콜백으로 _channels에 추가됨
-    _collection!.loadMore();
+    _collection.loadMore();
   }
 
   Future<void> _showCreateChannelDialog() async {
@@ -120,7 +120,7 @@ class _ChannelListPageState extends State<ChannelListPage> {
   @override
   void dispose() {
     // Collection dispose 필수 - 안 하면 메모리 누수 발생
-    _collection?.dispose();
+    _collection.dispose();
     super.dispose();
   }
 

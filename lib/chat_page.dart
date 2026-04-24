@@ -14,14 +14,17 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
-  MessageCollection? _collection;
+  late MessageCollection _collection;
+  final _scrollController = ScrollController();
   final List<BaseMessage> _messages = [];
   final _controller = TextEditingController();
+  bool _isLoadingPrevious = false;
 
   @override
   void initState() {
     super.initState();
     _initCollection();
+    _scrollController.addListener(_onScroll);
   }
 
   void _initCollection() {
@@ -30,15 +33,32 @@ class _ChatPageState extends State<ChatPage> {
     // params: 기본값 사용 (previousResultSize: 20, nextResultSize: 0)
     _collection = MessageCollection(
       channel: widget.channel,
-      params: MessageListParams(),
+      params: MessageListParams()..previousResultSize = 20,
       handler: _MessageCollectionHandler(onUpdate: () => setState(() {}), messages: _messages),
     );
 
     // 메시지 로드 시작 - onMessagesAdded 콜백으로 _messages에 추가됨
-    _collection!.initialize();
+    _collection.initialize();
 
     // 채팅방 진입 시 읽음 처리 → unreadMessageCount 초기화
     widget.channel.markAsRead();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      if (_collection.hasPrevious && !_isLoadingPrevious) {
+        _loadPreviousMessages();
+      }
+    }
+  }
+
+  Future<void> _loadPreviousMessages() async {
+    _isLoadingPrevious = true;
+    try {
+      await _collection.loadPrevious();
+    } finally {
+      _isLoadingPrevious = false;
+    }
   }
 
   void _sendMessage() {
@@ -142,7 +162,8 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     // Collection dispose 필수 - 안 하면 메모리 누수 발생
-    _collection?.dispose();
+    _scrollController.dispose();
+    _collection.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -161,52 +182,56 @@ class _ChatPageState extends State<ChatPage> {
         child: Column(
           children: [
             Expanded(
-              child: ListView.builder(
-                reverse: true, // 최신 메시지가 아래로 오도록
-                itemCount: _messages.length,
-                itemBuilder: (_, index) {
-                  final msg = _messages[index];
-                  final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
-                  final isDeleted = msg.customType == 'deleted';
+              child: Scrollbar(
+                controller: _scrollController,
+                child: ListView.builder(
+                  controller: _scrollController,
+                  reverse: true, // 최신 메시지가 아래로 오도록
+                  itemCount: _messages.length,
+                  itemBuilder: (_, index) {
+                    final msg = _messages[index];
+                    final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
+                    final isDeleted = msg.customType == 'deleted';
 
-                  // AdminMessage: 가운데 시스템 메시지로 표시
-                  if (msg is AdminMessage) {
-                    return Center(
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-                        decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
-                        child: Text(msg.message, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      ),
-                    );
-                  }
-
-                  // UserMessage / FileMessage
-                  return Column(
-                    crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                    children: [
-                      GestureDetector(
-                        onLongPress: () => _showMessageOptions(msg),
+                    // AdminMessage: 가운데 시스템 메시지로 표시
+                    if (msg is AdminMessage) {
+                      return Center(
                         child: Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: isMe ? Colors.purple : Colors.grey[300],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
-                            style: TextStyle(
-                              color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
-                              fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                          decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
+                          child: Text(msg.message, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                        ),
+                      );
+                    }
+
+                    // UserMessage / FileMessage
+                    return Column(
+                      crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                      children: [
+                        GestureDetector(
+                          onLongPress: () => _showMessageOptions(msg),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: isMe ? Colors.purple : Colors.grey[300],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
+                              style: TextStyle(
+                                color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
+                                fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: _buildSendingStatus(msg)),
-                    ],
-                  );
-                },
+                        Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: _buildSendingStatus(msg)),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
             Padding(
