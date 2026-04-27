@@ -13,7 +13,6 @@ class ChannelListPage extends StatefulWidget {
 
 class _ChannelListPageState extends State<ChannelListPage> {
   late GroupChannelCollection _collection;
-  final List<GroupChannel> _channels = [];
 
   @override
   void initState() {
@@ -34,7 +33,7 @@ class _ChannelListPageState extends State<ChannelListPage> {
     // handler: 채널 추가/수정/삭제 이벤트 수신
     _collection = GroupChannelCollection(
       query: query,
-      handler: _ChannelCollectionHandler(onUpdate: () => setState(() {}), channels: _channels),
+      handler: _ChannelCollectionHandler(onUpdate: () => setState(() {})),
     );
 
     // 첫 페이지 로드 - onChannelsAdded 콜백으로 _channels에 추가됨
@@ -130,9 +129,9 @@ class _ChannelListPageState extends State<ChannelListPage> {
       appBar: AppBar(title: const Text('Channels')),
       floatingActionButton: FloatingActionButton(onPressed: _showCreateChannelDialog, child: const Icon(Icons.add)),
       body: ListView.builder(
-        itemCount: _channels.length,
+        itemCount: _collection.channelList.length,
         itemBuilder: (_, index) {
-          final channel = _channels[index];
+          final channel = _collection.channelList[index];
           return ListTile(
             // getChannelName: 멤버 userId 조합으로 표시 (내꺼, 상대꺼)
             title: Text(getChannelName(channel)),
@@ -157,38 +156,22 @@ class _ChannelListPageState extends State<ChannelListPage> {
 // GroupChannelCollectionHandler: 채널 목록 실시간 이벤트 수신
 class _ChannelCollectionHandler extends GroupChannelCollectionHandler {
   final VoidCallback onUpdate;
-  final List<GroupChannel> channels;
 
-  _ChannelCollectionHandler({required this.onUpdate, required this.channels});
+  _ChannelCollectionHandler({required this.onUpdate});
 
   @override
   void onChannelsAdded(GroupChannelContext context, List<GroupChannel> added) {
     // 새 채널 추가 (loadMore 결과 + 실시간 채널 생성)
-    channels.addAll(added);
     onUpdate();
   }
 
   @override
   void onChannelsUpdated(GroupChannelContext context, List<GroupChannel> updated) {
-    // 채널 정보 변경 (마지막 메시지, unread count, 채널 이름 등)
-    for (final ch in updated) {
-      final i = channels.indexWhere((c) => c.channelUrl == ch.channelUrl);
-      if (i != -1) channels[i] = ch;
-    }
-
-    // 마지막 메시지 최신순으로 재정렬
-    channels.sort((a, b) {
-      final aTime = a.lastMessage?.createdAt ?? 0;
-      final bTime = b.lastMessage?.createdAt ?? 0;
-      return bTime.compareTo(aTime);
-    });
     onUpdate();
   }
 
   @override
   void onChannelsDeleted(GroupChannelContext context, List<String> deletedUrls) {
-    // 채널 삭제
-    channels.removeWhere((c) => deletedUrls.contains(c.channelUrl));
     onUpdate();
   }
 }
