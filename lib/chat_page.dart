@@ -17,6 +17,10 @@ class _ChatPageState extends State<ChatPage> {
   late MessageCollection _collection;
   final _scrollController = ScrollController();
   final _controller = TextEditingController();
+  // TextField onChanged에서 @ 감지
+  bool _showMentionList = false;
+  List<Member> _mentionCandidates = []; // 표시용
+  final List<Member> _selectedMentions = []; // 전송용
 
   @override
   void initState() {
@@ -65,11 +69,13 @@ class _ChatPageState extends State<ChatPage> {
     if (text.isEmpty) return;
     _controller.clear();
 
+    debugPrint('[Send] mentionedUserIds: ${_selectedMentions.map((e) => e.userId).toList()}');
+
     // 메시지 전송
     // 전송 즉시 pending 메시지가 onMessagesAdded로 옴 → UI에 바로 표시
     // 서버 응답 후 succeeded로 변경 → onMessagesUpdated로 교체
     widget.channel.sendUserMessage(
-      UserMessageCreateParams(message: text),
+      UserMessageCreateParams(message: text)..mentionedUserIds = _selectedMentions.map((e) => e.userId).toList(),
       handler: (message, error) {
         if (error != null) {
           debugPrint('[Message] 전송 실패: ${error.message}');
@@ -77,6 +83,8 @@ class _ChatPageState extends State<ChatPage> {
         }
       },
     );
+    _selectedMentions.clear();
+    setState(() => _showMentionList = false);
   }
 
   // 내 메시지 꾹 누르면 수정/삭제 옵션 표시
@@ -113,6 +121,13 @@ class _ChatPageState extends State<ChatPage> {
                 );
               },
             ),
+            ListTile(
+              title: const Text('리액션'),
+              onTap: () {
+                Navigator.pop(context);
+                _showReactionPicker(msg);
+              },
+            ),
           ],
         ),
       ),
@@ -146,6 +161,34 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  // 이모지
+  Future<void> _showReactionPicker(BaseMessage msg) async {
+    final emojis = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        content: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: emojis
+              .map(
+                (emoji) => GestureDetector(
+                  onTap: () async {
+                    Navigator.pop(context);
+                    try {
+                      await widget.channel.addReaction(msg, emoji);
+                    } catch (e) {
+                      debugPrint('[Reaction] 실패: $e');
+                    }
+                  },
+                  child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
+
   // AdminMessage 전송 (Platform API 사용)
   // SDK에서는 수신만 가능, 발송은 서버에서만 가능
   // 테스트 목적으로 앱에서 직접 호출 (프로덕션에서는 내 서버에서 호출)
@@ -171,6 +214,17 @@ class _ChatPageState extends State<ChatPage> {
     final nextDate = DateTime.fromMillisecondsSinceEpoch(next.createdAt);
 
     return currentDate.day != nextDate.day || currentDate.month != nextDate.month || currentDate.year != nextDate.year;
+  }
+
+  void _selectMention(Member member) {
+    final text = _controller.text;
+    final lastAtIndex = text.lastIndexOf('@');
+    _controller.text = '${text.substring(0, lastAtIndex)}@${member.userId} ';
+    _controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: _controller.text.length),
+    );
+    _selectedMentions.add(member);
+    setState(() => _showMentionList = false);
   }
 
   @override
@@ -260,12 +314,54 @@ class _ChatPageState extends State<ChatPage> {
                           ),
                         ),
                         Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: _buildSendingStatus(msg)),
+                        if (msg.reactions != null && msg.reactions!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                            child: Wrap(
+                              spacing: 4,
+                              children: msg.reactions!.map((reaction) {
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[200],
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '${reaction.key} ${reaction.userIds.length}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
                       ],
                     );
                   },
                 ),
               ),
             ),
+            if (_showMentionList)
+              Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                margin: EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _mentionCandidates.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final member = _mentionCandidates[index];
+                    return ListTile(
+                      title: Text(member.userId),
+                      onTap: () => _selectMention(member),
+                    );
+                  },
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
@@ -273,6 +369,20 @@ class _ChatPageState extends State<ChatPage> {
                   Expanded(
                     child: TextField(
                       controller: _controller,
+                      onChanged: (text) {
+                        final lastAtIndex = text.lastIndexOf('@');
+                        if (lastAtIndex != -1) {
+                          final query = text.substring(lastAtIndex + 1).toLowerCase();
+                          setState(() {
+                            _mentionCandidates = widget.channel.members
+                                .where((m) => m.userId.toLowerCase().contains(query))
+                                .toList();
+                            _showMentionList = _mentionCandidates.isNotEmpty;
+                          });
+                        } else {
+                          setState(() => _showMentionList = false);
+                        }
+                      },
                       decoration: const InputDecoration(hintText: 'Message...'),
                     ),
                   ),
