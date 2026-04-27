@@ -14,7 +14,7 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
-  late MessageCollection _collection;
+  late final MessageCollection _collection;
   final _scrollController = ScrollController();
   final _controller = TextEditingController();
   // TextField onChanged에서 @ 감지

@@ -12,7 +12,7 @@ class ChannelListPage extends StatefulWidget {
 }
 
 class _ChannelListPageState extends State<ChannelListPage> {
-  late GroupChannelCollection _collection;
+  late final GroupChannelCollection _collection;
 
   @override
   void initState() {
