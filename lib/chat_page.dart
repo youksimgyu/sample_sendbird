@@ -161,8 +161,8 @@ class _ChatPageState extends State<ChatPage> {
   bool _shouldShowDate(int index) {
     final list = _collection.messageList;
 
-    // 가장 오래된 메시지 (맨 끝) 는 항상 날짜 표시
-    if (index == list.length - 1) return true;
+    // 범위 초과 방지 + 맨 끝은 항상 표시
+    if (index + 1 >= list.length) return true;
 
     final current = list[index];
     final next = list[index + 1]; // 내림차순이라 index+1이 더 오래됨
@@ -207,6 +207,7 @@ class _ChatPageState extends State<ChatPage> {
                     final showDate = _shouldShowDate(index);
                     final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
                     final isDeleted = msg.customType == 'deleted';
+                    final isEdited = msg.updatedAt > msg.createdAt;
 
                     // AdminMessage: 가운데 시스템 메시지로 표시
                     if (msg is AdminMessage) {
@@ -235,20 +236,27 @@ class _ChatPageState extends State<ChatPage> {
                         if (showDate) _buildDateDivider(msg.createdAt),
                         GestureDetector(
                           onLongPress: () => _showMessageOptions(msg),
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: isMe ? Colors.purple : Colors.grey[300],
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
-                              style: TextStyle(
-                                color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
-                                fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (isEdited && !isDeleted)
+                                Text('수정됨', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                              Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: isMe ? Colors.purple : Colors.grey[300],
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
+                                  style: TextStyle(
+                                    color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
+                                    fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
                         ),
                         Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: _buildSendingStatus(msg)),
