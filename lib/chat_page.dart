@@ -31,7 +31,9 @@ class _ChatPageState extends State<ChatPage> {
     // params: 기본값 사용 (previousResultSize: 20, nextResultSize: 0)
     _collection = MessageCollection(
       channel: widget.channel,
-      params: MessageListParams()..previousResultSize = 15,
+      params: MessageListParams()
+        ..previousResultSize = 15
+        ..reverse = true,
       handler: _MessageCollectionHandler(onUpdate: () => setState(() {})),
     );
 
@@ -156,6 +158,21 @@ class _ChatPageState extends State<ChatPage> {
     debugPrint('[AdminMessage] 전송: $message');
   }
 
+  bool _shouldShowDate(int index) {
+    final list = _collection.messageList;
+
+    // 가장 오래된 메시지 (맨 끝) 는 항상 날짜 표시
+    if (index == list.length - 1) return true;
+
+    final current = list[index];
+    final next = list[index + 1]; // 내림차순이라 index+1이 더 오래됨
+
+    final currentDate = DateTime.fromMillisecondsSinceEpoch(current.createdAt);
+    final nextDate = DateTime.fromMillisecondsSinceEpoch(next.createdAt);
+
+    return currentDate.day != nextDate.day || currentDate.month != nextDate.month || currentDate.year != nextDate.year;
+  }
+
   @override
   void dispose() {
     // Collection dispose 필수 - 안 하면 메모리 누수 발생
@@ -186,19 +203,28 @@ class _ChatPageState extends State<ChatPage> {
                   reverse: true, // 최신 메시지가 아래로 오도록
                   itemCount: _collection.messageList.length,
                   itemBuilder: (_, index) {
-                    final msg = _collection.messageList[_collection.messageList.length - 1 - index];
+                    final msg = _collection.messageList[index];
+                    final showDate = _shouldShowDate(index);
                     final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
                     final isDeleted = msg.customType == 'deleted';
 
                     // AdminMessage: 가운데 시스템 메시지로 표시
                     if (msg is AdminMessage) {
-                      return Center(
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-                          decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
-                          child: Text(msg.message, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                        ),
+                      return Column(
+                        children: [
+                          if (showDate) _buildDateDivider(msg.createdAt),
+                          Center(
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[200],
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(msg.message, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                            ),
+                          ),
+                        ],
                       );
                     }
 
@@ -206,6 +232,7 @@ class _ChatPageState extends State<ChatPage> {
                     return Column(
                       crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                       children: [
+                        if (showDate) _buildDateDivider(msg.createdAt),
                         GestureDetector(
                           onLongPress: () => _showMessageOptions(msg),
                           child: Container(
@@ -264,6 +291,24 @@ class _ChatPageState extends State<ChatPage> {
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildDateDivider(int timestamp) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          '${dt.year}.${dt.month.toString().padLeft(2, '0')}.${dt.day.toString().padLeft(2, '0')}',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ),
+    );
   }
 }
 
