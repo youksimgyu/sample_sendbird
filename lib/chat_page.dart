@@ -205,11 +205,11 @@ class _ChatPageState extends State<ChatPage> {
   bool _shouldShowDate(int index) {
     final list = _collection.messageList;
 
-    // 범위 초과 방지 + 맨 끝은 항상 표시
-    if (index + 1 >= list.length) return true;
+    // 마지막 메시지이고 더 불러올 게 없으면 날짜 표시
+    if (index + 1 >= list.length) return !_collection.hasPrevious;
 
     final current = list[index];
-    final next = list[index + 1]; // 내림차순이라 index+1이 더 오래됨
+    final next = list[index + 1];
 
     final currentDate = DateTime.fromMillisecondsSinceEpoch(current.createdAt);
     final nextDate = DateTime.fromMillisecondsSinceEpoch(next.createdAt);
@@ -471,9 +471,19 @@ class _MessageCollectionHandler extends MessageCollectionHandler {
 }
 
 // Unix timestamp(ms) → HH:mm 형식으로 변환
+// String _formatTime(int timestamp) {
+//   final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
+//   final hour = dt.hour.toString().padLeft(2, '0');
+//   final minute = dt.minute.toString().padLeft(2, '0');
+//   return '$hour:$minute';
+// }
 String _formatTime(int timestamp) {
   final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
+  final month = dt.month.toString().padLeft(2, '0');
+  final day = dt.day.toString().padLeft(2, '0');
   final hour = dt.hour.toString().padLeft(2, '0');
   final minute = dt.minute.toString().padLeft(2, '0');
-  return '$hour:$minute';
+
+  // 테스트를 위해 [월/일 시:분] 형태로 출력
+  return '$month/$day $hour:$minute';
 }
