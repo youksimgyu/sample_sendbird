@@ -38,6 +38,14 @@ class SampleSendbird extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(home: const LoginPage());
+    return MaterialApp(
+      theme: ThemeData(
+        appBarTheme: AppBarTheme(
+          scrolledUnderElevation: 0,
+          backgroundColor: Theme.of(context).colorScheme.surface,
+        ),
+      ),
+      home: const LoginPage(),
+    );
   }
 }
