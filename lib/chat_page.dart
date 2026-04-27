@@ -90,9 +90,8 @@ class _ChatPageState extends State<ChatPage> {
   // 내 메시지 꾹 누르면 수정/삭제 옵션 표시
   // 상대방 메시지 또는 삭제된 메시지는 옵션 없음
   Future<void> _showMessageOptions(BaseMessage msg) async {
-    final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
-    if (!isMe) return;
     if (msg.customType == 'deleted') return;
+    final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
 
     await showDialog(
       context: context,
@@ -100,27 +99,29 @@ class _ChatPageState extends State<ChatPage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              title: const Text('수정'),
-              onTap: () {
-                Navigator.pop(context);
-                _showEditDialog(msg as UserMessage);
-              },
-            ),
-            ListTile(
-              title: const Text('삭제'),
-              onTap: () async {
-                Navigator.pop(context);
-                // 실제 삭제 대신 내용을 변경해서 흔적 남기기
-                // customType: 'deleted' 로 UI에서 구분
-                await widget.channel.updateUserMessage(
-                  msg.messageId,
-                  UserMessageUpdateParams()
-                    ..message = '삭제된 메시지입니다'
-                    ..customType = 'deleted',
-                );
-              },
-            ),
+            if (isMe)
+              ListTile(
+                title: const Text('수정'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showEditDialog(msg as UserMessage);
+                },
+              ),
+            if (isMe)
+              ListTile(
+                title: const Text('삭제'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  // 실제 삭제 대신 내용을 변경해서 흔적 남기기
+                  // customType: 'deleted' 로 UI에서 구분
+                  await widget.channel.updateUserMessage(
+                    msg.messageId,
+                    UserMessageUpdateParams()
+                      ..message = '삭제된 메시지입니다'
+                      ..customType = 'deleted',
+                  );
+                },
+              ),
             ListTile(
               title: const Text('리액션'),
               onTap: () {
