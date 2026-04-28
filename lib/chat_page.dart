@@ -27,6 +27,15 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     _initCollection();
     _scrollController.addListener(_onScroll);
+
+    // 타이핑
+    SendbirdChat.addChannelHandler(
+      'typing_${widget.channel.channelUrl}',
+      _TypingHandler(
+        onUpdate: () => setState(() {}),
+        channel: widget.channel,
+      ),
+    );
   }
 
   void _initCollection() {
@@ -68,6 +77,7 @@ class _ChatPageState extends State<ChatPage> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     _controller.clear();
+    widget.channel.endTyping();
 
     debugPrint('[Send] mentionedUserIds: ${_selectedMentions.map((e) => e.userId).toList()}');
 
@@ -234,6 +244,7 @@ class _ChatPageState extends State<ChatPage> {
     _scrollController.dispose();
     _collection.dispose();
     _controller.dispose();
+    SendbirdChat.removeChannelHandler('typing_${widget.channel.channelUrl}');
     super.dispose();
   }
 
@@ -363,6 +374,20 @@ class _ChatPageState extends State<ChatPage> {
                   },
                 ),
               ),
+            // 타이핑 인디케이터 여기
+            Builder(
+              builder: (context) {
+                final typingUsers = widget.channel.getTypingUsers();
+                if (typingUsers.isEmpty) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  child: Text(
+                    '${typingUsers.map((u) => u.userId).join(', ')} 입력 중...',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                );
+              },
+            ),
             Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
@@ -371,6 +396,12 @@ class _ChatPageState extends State<ChatPage> {
                     child: TextField(
                       controller: _controller,
                       onChanged: (text) {
+                        if (text.isEmpty) {
+                          widget.channel.endTyping();
+                        } else {
+                          widget.channel.startTyping();
+                        }
+
                         final lastAtIndex = text.lastIndexOf('@');
                         if (lastAtIndex != -1) {
                           final query = text.substring(lastAtIndex + 1).toLowerCase();
@@ -470,13 +501,6 @@ class _MessageCollectionHandler extends MessageCollectionHandler {
   }
 }
 
-// Unix timestamp(ms) → HH:mm 형식으로 변환
-// String _formatTime(int timestamp) {
-//   final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
-//   final hour = dt.hour.toString().padLeft(2, '0');
-//   final minute = dt.minute.toString().padLeft(2, '0');
-//   return '$hour:$minute';
-// }
 String _formatTime(int timestamp) {
   final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
   final month = dt.month.toString().padLeft(2, '0');
@@ -486,4 +510,21 @@ String _formatTime(int timestamp) {
 
   // 테스트를 위해 [월/일 시:분] 형태로 출력
   return '$month/$day $hour:$minute';
+}
+
+class _TypingHandler extends GroupChannelHandler {
+  final VoidCallback onUpdate;
+  final GroupChannel channel;
+
+  _TypingHandler({required this.onUpdate, required this.channel});
+
+  @override
+  void onTypingStatusUpdated(GroupChannel ch) {
+    if (ch.channelUrl == channel.channelUrl) onUpdate();
+  }
+
+  @override
+  void onMessageReceived(BaseChannel channel, BaseMessage message) {
+    // MessageCollection이 처리하므로 비워둬도 됨
+  }
 }
