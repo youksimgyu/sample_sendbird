@@ -24,7 +24,7 @@ class _LoginPageState extends State<LoginPage> {
     final response = await http.post(
       Uri.parse('https://api-$appId.sendbird.com/v3/users/$userId/token'),
       headers: {'Api-Token': apiToken, 'Content-Type': 'application/json'},
-      body: jsonEncode({'expires_at': DateTime.now().add(const Duration(days: 7)).millisecondsSinceEpoch}),
+      body: jsonEncode({'expires_at': DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch}),
     );
 
     if (response.statusCode == 200) {
@@ -38,21 +38,32 @@ class _LoginPageState extends State<LoginPage> {
     return null;
   }
 
+  // 기존 세션 토큰 전체 만료
+  // 새 로그인 전에 호출해서 기존 기기 연결 끊기
+  // 기존 기기에서는 onSessionClosed 호출됨 → 로그아웃 처리
+  Future<void> _revokeToken(String userId) async {
+    await http.delete(
+      Uri.parse('https://api-$appId.sendbird.com/v3/users/$userId/token'),
+      headers: {'Api-Token': apiToken, 'Content-Type': 'application/json'},
+    );
+  }
+
   Future<void> _login() async {
     final userId = _userIdController.text.trim();
     if (userId.isEmpty) return;
 
+    await _revokeToken(userId);
     // session token 발급
     // token이 null이면 accessToken 없이 connect → Sendbird가 유저 자동 생성
     final token = await _getSessionToken(userId);
 
-    // Sendbird 서버에 WebSocket 연결
-    // token이 없으면 테스트 모드 (보안 취약 → 프로덕션에서는 반드시 token 필요)
-    await SendbirdChat.connect(userId, accessToken: token);
-
     // SessionHandler 등록 - token 만료 시 자동 갱신 처리
     // connect() 이후에 등록해야 함
     SendbirdChat.setSessionHandler(MySessionHandler(fetchToken: _getSessionToken));
+
+    // Sendbird 서버에 WebSocket 연결
+    // token이 없으면 테스트 모드 (보안 취약 → 프로덕션에서는 반드시 token 필요)
+    await SendbirdChat.connect(userId, accessToken: token);
 
     debugPrint('[Login] 로그인 성공: $userId');
 
@@ -92,6 +103,7 @@ class MySessionHandler extends SessionHandler {
 
   @override
   void onAccessTokenRequired(AccessTokenRequester accessTokenRequester) async {
+    debugPrint('[SessionHandler] AccessTokenRequester');
     final userId = SendbirdChat.currentUser?.userId;
     if (userId == null) {
       // 유저 정보 없으면 갱신 실패 처리
@@ -110,6 +122,10 @@ class MySessionHandler extends SessionHandler {
     // token 갱신 실패 또는 token이 null로 전달된 경우 호출
     // 로그인 화면으로 이동 처리 필요 (Navigator, GetX 등 활용)
     debugPrint('[SessionHandler] 세션 종료 → 로그인 화면으로 이동 필요');
+    navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (route) => false,
+    );
   }
 
   @override
@@ -122,5 +138,9 @@ class MySessionHandler extends SessionHandler {
   void onSessionError(SendbirdException e) {
     // SDK 내부 에러로 갱신 실패 시 호출 (선택적 구현)
     debugPrint('[SessionHandler] 토큰 갱신 에러: ${e.message}');
+    navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (route) => false,
+    );
   }
 }

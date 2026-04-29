@@ -18,6 +18,8 @@ String getChannelName(GroupChannel channel) {
   return '$me, ${others.join(', ')}';
 }
 
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -39,6 +41,7 @@ class SampleSendbird extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       theme: ThemeData(
         appBarTheme: AppBarTheme(
           scrolledUnderElevation: 0,
