@@ -21,6 +21,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _showMentionList = false;
   List<Member> _mentionCandidates = []; // 표시용
   final List<Member> _selectedMentions = []; // 전송용
+  late int _lastReadAt; // 읽은 마지막 시간
 
   @override
   void initState() {
@@ -38,7 +39,8 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  void _initCollection() {
+  void _initCollection() async {
+    _lastReadAt = widget.channel.myReadReceipt();
     // MessageCollection: 메시지 목록 실시간 관리
     // 로컬 캐시 + 서버 동기화 + 실시간 수신 자동 처리
     // params: 기본값 사용 (previousResultSize: 20, nextResultSize: 0)
@@ -51,10 +53,27 @@ class _ChatPageState extends State<ChatPage> {
     );
 
     // 메시지 로드 시작 - onMessagesAdded 콜백으로 _messages에 추가됨
-    _collection.initialize();
+    await _collection.initialize();
+    _calculateUnreadDivider();
 
     // 채팅방 진입 시 읽음 처리 → unreadMessageCount 초기화
     widget.channel.markAsRead();
+  }
+
+  // 여기까지 읽음 위치 계산
+  int _unreadDividerMessageId = -1;
+  void _calculateUnreadDivider() {
+    if (_lastReadAt == 0) return;
+    if (widget.channel.unreadMessageCount == 0) return;
+
+    final list = _collection.messageList;
+    if (list.isEmpty) return;
+
+    for (int i = 0; i < list.length; i++) {
+      final msg = list[i];
+      if (msg.createdAt <= _lastReadAt) break;
+      _unreadDividerMessageId = msg.messageId;
+    }
   }
 
   void _onScroll() {
@@ -78,8 +97,6 @@ class _ChatPageState extends State<ChatPage> {
     if (text.isEmpty) return;
     _controller.clear();
     widget.channel.endTyping();
-
-    debugPrint('[Send] mentionedUserIds: ${_selectedMentions.map((e) => e.userId).toList()}');
 
     // 메시지 전송
     // 전송 즉시 pending 메시지가 onMessagesAdded로 옴 → UI에 바로 표시
@@ -274,12 +291,23 @@ class _ChatPageState extends State<ChatPage> {
                     final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
                     final isDeleted = msg.customType == 'deleted';
                     final isEdited = msg.updatedAt > msg.createdAt;
-
                     // AdminMessage: 가운데 시스템 메시지로 표시
                     if (msg is AdminMessage) {
                       return Column(
                         children: [
                           if (showDate) _buildDateDivider(msg.createdAt),
+                          if (msg.messageId == _unreadDividerMessageId)
+                            Center(
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(vertical: 8),
+                                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue[100],
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text('여기까지 읽음', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                              ),
+                            ),
                           Center(
                             child: Container(
                               margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
@@ -300,6 +328,18 @@ class _ChatPageState extends State<ChatPage> {
                       crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                       children: [
                         if (showDate) _buildDateDivider(msg.createdAt),
+                        if (msg.messageId == _unreadDividerMessageId)
+                          Center(
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 8),
+                              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.blue[100],
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text('여기까지 읽음', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                            ),
+                          ),
                         GestureDetector(
                           onLongPress: () => _showMessageOptions(msg),
                           child: Row(
@@ -470,6 +510,7 @@ class _MessageCollectionHandler extends MessageCollectionHandler {
 
   @override
   void onMessagesAdded(MessageContext context, GroupChannel channel, List<BaseMessage> added) {
+    channel.markAsRead();
     onUpdate();
   }
 
