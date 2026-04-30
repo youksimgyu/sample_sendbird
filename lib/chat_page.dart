@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:sample_sendbird/main.dart';
 import 'package:sendbird_chat_sdk/sendbird_chat_sdk.dart';
@@ -22,6 +24,8 @@ class _ChatPageState extends State<ChatPage> {
   List<Member> _mentionCandidates = []; // 표시용
   final List<Member> _selectedMentions = []; // 전송용
   late int _lastReadAt; // 읽은 마지막 시간
+  int _mentionAtIndex = -1; // 멘션 @ 위치 저장
+  int _mentionCursorPos = -1; // @ 감지 시점의 커서 위치 저장
 
   @override
   void initState() {
@@ -93,8 +97,9 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _sendMessage() {
-    final text = _controller.text.trim();
+    final text = _controller.text;
     if (text.isEmpty) return;
+    debugPrint('[Send] mentionedUserIds: ${_selectedMentions.map((e) => e.userId).toList()}');
     _controller.clear();
     widget.channel.endTyping();
 
@@ -113,6 +118,17 @@ class _ChatPageState extends State<ChatPage> {
     _selectedMentions.clear();
     setState(() => _showMentionList = false);
   }
+
+  late final _focusNode = FocusNode(
+    onKeyEvent: (node, event) {
+      if (kIsWeb && event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter) {
+        if (HardwareKeyboard.instance.isShiftPressed) return KeyEventResult.ignored;
+        _sendMessage();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    },
+  );
 
   // 내 메시지 꾹 누르면 수정/삭제 옵션 표시
   // 상대방 메시지 또는 삭제된 메시지는 옵션 없음
@@ -246,10 +262,13 @@ class _ChatPageState extends State<ChatPage> {
 
   void _selectMention(Member member) {
     final text = _controller.text;
-    final lastAtIndex = text.lastIndexOf('@');
-    _controller.text = '${text.substring(0, lastAtIndex)}@${member.userId} ';
+    final after = text.substring(_mentionCursorPos);
+    final newText = '${text.substring(0, _mentionAtIndex)}@${member.userId} $after';
+    _controller.text = newText;
+    final newOffset = (_mentionAtIndex + member.userId.length + 2).clamp(0, newText.length);
+
     _controller.selection = TextSelection.fromPosition(
-      TextPosition(offset: _controller.text.length),
+      TextPosition(offset: newOffset),
     );
     _selectedMentions.add(member);
     setState(() => _showMentionList = false);
@@ -261,6 +280,7 @@ class _ChatPageState extends State<ChatPage> {
     _scrollController.dispose();
     _collection.dispose();
     _controller.dispose();
+    _focusNode.dispose();
     SendbirdChat.removeChannelHandler('typing_${widget.channel.channelUrl}');
     super.dispose();
   }
@@ -347,18 +367,21 @@ class _ChatPageState extends State<ChatPage> {
                             children: [
                               if (isEdited && !isDeleted)
                                 Text('수정됨', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                              Container(
-                                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: isMe ? Colors.purple : Colors.grey[300],
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
-                                  style: TextStyle(
-                                    color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
-                                    fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                              Flexible(
+                                child: Container(
+                                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.5),
+                                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: isMe ? Colors.purple : Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
+                                    style: TextStyle(
+                                      color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
+                                      fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -431,10 +454,16 @@ class _ChatPageState extends State<ChatPage> {
             Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
                     child: TextField(
+                      focusNode: _focusNode,
                       controller: _controller,
+                      textInputAction: TextInputAction.newline,
+                      keyboardType: TextInputType.multiline,
+                      minLines: 1,
+                      maxLines: 6,
                       onChanged: (text) {
                         if (text.isEmpty) {
                           widget.channel.endTyping();
@@ -442,18 +471,44 @@ class _ChatPageState extends State<ChatPage> {
                           widget.channel.startTyping();
                         }
 
-                        final lastAtIndex = text.lastIndexOf('@');
-                        if (lastAtIndex != -1) {
-                          final query = text.substring(lastAtIndex + 1).toLowerCase();
-                          setState(() {
-                            _mentionCandidates = widget.channel.members
-                                .where((m) => m.userId.toLowerCase().contains(query))
-                                .toList();
-                            _showMentionList = _mentionCandidates.isNotEmpty;
-                          });
-                        } else {
+                        // 커서 위치 기준으로 @ 감지
+                        // _controller.selection.baseOffset: 현재 커서 위치 (인덱스)
+                        final cursorPos = _controller.selection.baseOffset;
+                        if (cursorPos == -1) {
                           setState(() => _showMentionList = false);
+                          return;
                         }
+
+                        // 커서 앞 텍스트에서만 @ 찾기
+                        final textBeforeCursor = text.substring(0, cursorPos);
+                        final lastAtIndex = textBeforeCursor.lastIndexOf('@');
+                        _mentionAtIndex = lastAtIndex;
+                        _mentionCursorPos = cursorPos;
+
+                        if (lastAtIndex != -1) {
+                          // @ 앞이 문장 시작이거나 공백일 때만 멘션으로 처리
+                          // "hello@world" → 멘션 아님, "hello @world" → 멘션
+                          final beforeAt =
+                              lastAtIndex == 0 ||
+                              textBeforeCursor[lastAtIndex - 1] == ' ' ||
+                              textBeforeCursor[lastAtIndex - 1] == '\n';
+                          if (beforeAt) {
+                            // @ 뒤 텍스트를 query로 사용
+                            final query = textBeforeCursor.substring(lastAtIndex + 1).toLowerCase();
+                            // query에 공백 포함되면 멘션 선택 완료 → 목록 닫기
+                            // "@user " → 선택 완료, "@use" → 입력 중
+                            if (!query.contains(' ')) {
+                              setState(() {
+                                _mentionCandidates = widget.channel.members
+                                    .where((m) => m.userId.toLowerCase().contains(query))
+                                    .toList();
+                                _showMentionList = _mentionCandidates.isNotEmpty;
+                              });
+                              return;
+                            }
+                          }
+                        }
+                        setState(() => _showMentionList = false);
                       },
                       decoration: const InputDecoration(hintText: 'Message...'),
                     ),
