@@ -136,7 +136,11 @@ class _ChannelListPageState extends State<ChannelListPage> {
             // getChannelName: 멤버 userId 조합으로 표시 (내꺼, 상대꺼)
             title: Text(getChannelName(channel)),
             // lastMessage: 채널 객체에 포함된 마지막 메시지
-            subtitle: Text(channel.lastMessage?.message ?? ''),
+            subtitle: Text(
+              channel.lastMessage?.message ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             // unreadMessageCount: 내 기준 안 읽은 메시지 수
             trailing: channel.unreadMessageCount > 0
                 ? CircleAvatar(
