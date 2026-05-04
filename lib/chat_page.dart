@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -26,6 +27,10 @@ class _ChatPageState extends State<ChatPage> {
   late int _lastReadAt; // 읽은 마지막 시간
   int _mentionAtIndex = -1; // 멘션 @ 위치 저장
   int _mentionCursorPos = -1; // @ 감지 시점의 커서 위치 저장
+  // 스크롤 중 날짜 오버레이 표시
+  bool _showDateOverlay = false;
+  Timer? _dateOverlayTimer;
+  final Map<int, GlobalKey> _dateKeys = {};
 
   @override
   void initState() {
@@ -86,6 +91,16 @@ class _ChatPageState extends State<ChatPage> {
         _loadPreviousMessages();
       }
     }
+
+    // 스크롤 중 날짜 오버레이 표시
+    _checkVisibleDate();
+    setState(() => _showDateOverlay = true);
+
+    // 스크롤 멈추면 2초 후 사라짐
+    _dateOverlayTimer?.cancel();
+    _dateOverlayTimer = Timer(const Duration(seconds: 1), () {
+      setState(() => _showDateOverlay = false);
+    });
   }
 
   Future<void> _loadPreviousMessages() async {
@@ -93,6 +108,45 @@ class _ChatPageState extends State<ChatPage> {
       await _collection.loadPrevious();
     } catch (e) {
       debugPrint('[Message] loadPrevious 실패: $e');
+    }
+  }
+
+  // 오버레이 날짜 계산
+  String _currentDateOverlay = '';
+  void _checkVisibleDate() {
+    double topDy = double.infinity;
+    int? visibleIndex;
+    double latestHiddenDy = double.negativeInfinity;
+    int? hiddenIndex;
+
+    for (final entry in _dateKeys.entries) {
+      final ctx = entry.value.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null) continue;
+      final pos = box.localToGlobal(Offset.zero);
+
+      if (pos.dy >= 0 && pos.dy < topDy) {
+        topDy = pos.dy;
+        visibleIndex = entry.key;
+      } else if (pos.dy < 0 && pos.dy > latestHiddenDy) {
+        latestHiddenDy = pos.dy;
+        hiddenIndex = entry.key;
+      }
+    }
+
+    if (visibleIndex != null) {
+      final msg = _collection.messageList[visibleIndex];
+      final dt = DateTime.fromMillisecondsSinceEpoch(msg.createdAt);
+      _currentDateOverlay = '${dt.year}.${dt.month.toString().padLeft(2, '0')}.${dt.day.toString().padLeft(2, '0')}';
+    } else if (hiddenIndex != null) {
+      // 사라진 마지막 메시지보다 index가 작은 것 중 가장 큰 것 = 다음 날짜의 마지막 메시지
+      final nextIndex = _dateKeys.keys.where((k) => k < hiddenIndex!).fold<int>(-1, (prev, k) => k > prev ? k : prev);
+      if (nextIndex != -1) {
+        final msg = _collection.messageList[nextIndex];
+        final dt = DateTime.fromMillisecondsSinceEpoch(msg.createdAt);
+        _currentDateOverlay = '${dt.year}.${dt.month.toString().padLeft(2, '0')}.${dt.day.toString().padLeft(2, '0')}';
+      }
     }
   }
 
@@ -281,6 +335,7 @@ class _ChatPageState extends State<ChatPage> {
     _collection.dispose();
     _controller.dispose();
     _focusNode.dispose();
+    _dateOverlayTimer?.cancel();
     SendbirdChat.removeChannelHandler('typing_${widget.channel.channelUrl}');
     super.dispose();
   }
@@ -299,120 +354,151 @@ class _ChatPageState extends State<ChatPage> {
         child: Column(
           children: [
             Expanded(
-              child: Scrollbar(
-                controller: _scrollController,
-                child: ListView.builder(
-                  controller: _scrollController,
-                  reverse: true, // 최신 메시지가 아래로 오도록
-                  itemCount: _collection.messageList.length,
-                  itemBuilder: (_, index) {
-                    final msg = _collection.messageList[index];
-                    final showDate = _shouldShowDate(index);
-                    final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
-                    final isDeleted = msg.customType == 'deleted';
-                    final isEdited = msg.updatedAt > msg.createdAt;
-                    // AdminMessage: 가운데 시스템 메시지로 표시
-                    if (msg is AdminMessage) {
-                      return Column(
-                        children: [
-                          if (showDate) _buildDateDivider(msg.createdAt),
-                          if (msg.messageId == _unreadDividerMessageId)
-                            Center(
-                              child: Container(
-                                margin: const EdgeInsets.symmetric(vertical: 8),
-                                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue[100],
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: const Text('여기까지 읽음', style: TextStyle(fontSize: 12, color: Colors.blue)),
-                              ),
-                            ),
-                          Center(
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[200],
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(msg.message, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                            ),
-                          ),
-                        ],
-                      );
-                    }
+              child: Stack(
+                children: [
+                  Scrollbar(
+                    controller: _scrollController,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      reverse: true, // 최신 메시지가 아래로 오도록
+                      itemCount: _collection.messageList.length,
+                      itemBuilder: (_, index) {
+                        final msg = _collection.messageList[index];
+                        final showDate = _shouldShowDate(index);
+                        final isMe = msg.sender?.userId == SendbirdChat.currentUser?.userId;
+                        final isDeleted = msg.customType == 'deleted';
+                        final isEdited = msg.updatedAt > msg.createdAt;
 
-                    // UserMessage / FileMessage
-                    return Column(
-                      crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                      children: [
-                        if (showDate) _buildDateDivider(msg.createdAt),
-                        if (msg.messageId == _unreadDividerMessageId)
-                          Center(
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 8),
-                              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.blue[100],
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Text('여기까지 읽음', style: TextStyle(fontSize: 12, color: Colors.blue)),
-                            ),
-                          ),
-                        GestureDetector(
-                          onLongPress: () => _showMessageOptions(msg),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
+                        // 각 날짜의 마지막 메시지에 GlobalKey 달기
+                        // index == 0 이거나 다음 메시지가 다른 날짜이면 마지막 메시지
+                        final isLastOfDay = index == 0 || _shouldShowDate(index - 1);
+                        if (isLastOfDay) _dateKeys[index] ??= GlobalKey();
+
+                        // AdminMessage: 가운데 시스템 메시지로 표시
+                        if (msg is AdminMessage) {
+                          return Column(
+                            key: isLastOfDay ? _dateKeys[index] : null,
                             children: [
-                              if (isEdited && !isDeleted)
-                                Text('수정됨', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                              Flexible(
-                                child: Container(
-                                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.5),
-                                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: isMe ? Colors.purple : Colors.grey[300],
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
-                                    style: TextStyle(
-                                      color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
-                                      fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                              if (showDate) _buildDateDivider(msg.createdAt),
+                              if (msg.messageId == _unreadDividerMessageId)
+                                Center(
+                                  child: Container(
+                                    margin: const EdgeInsets.symmetric(vertical: 8),
+                                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue[100],
+                                      borderRadius: BorderRadius.circular(12),
                                     ),
+                                    child: const Text('여기까지 읽음', style: TextStyle(fontSize: 12, color: Colors.blue)),
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: _buildSendingStatus(msg)),
-                        if (msg.reactions != null && msg.reactions!.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                            child: Wrap(
-                              spacing: 4,
-                              children: msg.reactions!.map((reaction) {
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              Center(
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
                                   decoration: BoxDecoration(
                                     color: Colors.grey[200],
                                     borderRadius: BorderRadius.circular(12),
                                   ),
-                                  child: Text(
-                                    '${reaction.key} ${reaction.userIds.length}',
-                                    style: const TextStyle(fontSize: 12),
+                                  child: Text(msg.message, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+
+                        // UserMessage / FileMessage
+                        return Column(
+                          key: isLastOfDay ? _dateKeys[index] : null,
+                          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                          children: [
+                            if (showDate) _buildDateDivider(msg.createdAt),
+                            if (msg.messageId == _unreadDividerMessageId)
+                              Center(
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 8),
+                                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue[100],
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
-                                );
-                              }).toList(),
+                                  child: const Text('여기까지 읽음', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                                ),
+                              ),
+                            GestureDetector(
+                              onLongPress: () => _showMessageOptions(msg),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (isEdited && !isDeleted)
+                                    Text('수정됨', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                  Flexible(
+                                    child: Container(
+                                      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.5),
+                                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: isMe ? Colors.purple : Colors.grey[300],
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        isDeleted ? '삭제된 메시지입니다' : (msg is UserMessage ? msg.message : '[file]'),
+                                        style: TextStyle(
+                                          color: isDeleted ? Colors.grey : (isMe ? Colors.white : Colors.black),
+                                          fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              child: _buildSendingStatus(msg),
+                            ),
+                            if (msg.reactions != null && msg.reactions!.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                                child: Wrap(
+                                  spacing: 4,
+                                  children: msg.reactions!.map((reaction) {
+                                    return Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[200],
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        '${reaction.key} ${reaction.userIds.length}',
+                                        style: const TextStyle(fontSize: 12),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  if (_showDateOverlay)
+                    Positioned(
+                      top: 8,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                      ],
-                    );
-                  },
-                ),
+                          child: Text(_currentDateOverlay, style: TextStyle(fontSize: 12, color: Colors.white)),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             if (_showMentionList)
